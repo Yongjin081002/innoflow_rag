@@ -4,6 +4,9 @@ boost_best_vlm_v3/
 boost_best_vlm_v3_tmp/
 boost_best_vlm_v4/
 boost_best_vlm_v4_tmp/
+boost_best_vlm_v5/
+boost_best_vlm_v6/
+boost_best_vlm_v7/
 boost_v3b_best/
 boost_v3b_best_vlm_v3/
 boost_v3_best/
@@ -14,6 +17,7 @@ bge-m3-finetuned/
 # 임시 모델/학습 디렉토리
 tmp_*/
 *_tmp/
+tmp_tune_r2/
 boost_tmp/
 boost_v2_tmp/
 boost_v3_tmp/
@@ -26,7 +30,12 @@ boost_weak_tmp/
 # Python
 __pycache__/
 *.pyc
+*.pkl
 
 # 로그
 *.log
 nohup.out
+
+# Qdrant / env
+qdrant_fault_data/
+.env
