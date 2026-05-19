@@ -1,15 +1,14 @@
 """
-과실비율 기준 검색 (Qdrant + boost_best_vlm_v4)
+과실비율 기준 검색 (Qdrant + boost_best_vlm)
 - 반환 형식: 공통 스키마 (type, id, content, base_fault, modifiers, category, source, score, metadata)
 """
 import json
 import os
 import sys
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+import config
 
-COLLECTION_NAME = "fault_rules"
-QDRANT_PATH = os.path.join(BASE_DIR, "qdrant_fault_data")
+COLLECTION_NAME = config.QDRANT_COLLECTION
 
 
 class FaultRuleSearcher:
@@ -17,13 +16,14 @@ class FaultRuleSearcher:
         from sentence_transformers import SentenceTransformer
         from qdrant_client import QdrantClient
 
-        model_path = os.path.join(BASE_DIR, "boost_best_vlm_v4")
-        if not os.path.isdir(model_path):
-            model_path = os.path.join(BASE_DIR, "boost_best_vlm_v3")
-        print(f"모델 로딩: {os.path.basename(model_path)}")
-        self.model = SentenceTransformer(model_path)
+        print(f"모델 로딩: {os.path.basename(config.MODEL_PATH)}")
+        self.model = SentenceTransformer(config.MODEL_PATH)
         self.model.max_seq_length = 384
-        self.client = QdrantClient(path=QDRANT_PATH)
+
+        if config.QDRANT_HOST:
+            self.client = QdrantClient(host=config.QDRANT_HOST, port=config.QDRANT_PORT)
+        else:
+            self.client = QdrantClient(path=config.QDRANT_PATH)
 
     def search(self, query, top_k=5):
         """
