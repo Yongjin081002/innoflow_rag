@@ -9,3 +9,5 @@ fastapi
 uvicorn[standard]
 python-dotenv
 pydantic
+pdfplumber
+requests

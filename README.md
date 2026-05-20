@@ -1,5 +1,49 @@
 # InnoFlow RAG — 과실기준 검색 시스템
 
+## 문서 자동 업데이트
+
+손보협 과실비율 인정기준은 약 4년 주기로 개정됩니다 (2019년 9차 → 2023년 10차).
+분기별 1회 자동으로 PDF 변경을 감지해 Qdrant를 최신 상태로 유지합니다.
+
+| 항목 | 내용 |
+|------|------|
+| 자동 실행 주기 | 매년 1월·4월·7월·10월 1일 자정 (cron) |
+| 변경 감지 방식 | PDF SHA-256 해시 비교 |
+| 업데이트 흐름 | PDF 다운로드 → 텍스트 추출 → 청킹 → 임베딩 → Qdrant 재삽입 |
+| 수동 업데이트 | `POST /admin/update-rag` 또는 `python3 update_pipeline.py --force` |
+| 상태 확인 | `GET /admin/update-status` 또는 `update_log.json` |
+
+### cron 등록 방법
+
+```bash
+# 1. crontab 편집
+crontab -e
+
+# 2. 아래 줄 추가 후 저장 (:wq)
+0 0 1 1,4,7,10 * python3 /home/minsung0830/innoflow_rag/update_pipeline.py >> /home/minsung0830/innoflow_rag/update_cron.log 2>&1
+
+# 3. 등록 확인
+crontab -l
+
+# 4. 즉시 수동 테스트
+python3 update_pipeline.py --force
+```
+
+### 관리자 API
+
+```bash
+# 업데이트 실행 (변경 시에만)
+curl -X POST http://localhost:8000/admin/update-rag
+
+# 강제 업데이트 (변경 여부 무관)
+curl -X POST "http://localhost:8000/admin/update-rag?force=true"
+
+# 업데이트 상태 확인
+curl http://localhost:8000/admin/update-status
+```
+
+---
+
 ## 개요
 
 블랙박스 영상 분석 VLM(Qwen3.5-27B)이 생성한 사고 장면 텍스트를 쿼리로 받아, 자동차사고 과실비율 인정기준 chunk 중 가장 유사한 사고 유형을 검색하는 과실기준 RAG 시스템입니다.
