@@ -13,11 +13,16 @@ COLLECTION_NAME = config.QDRANT_COLLECTION
 QDRANT_PATH = config.QDRANT_PATH
 
 
+def select_model_device():
+    return os.environ.get("INNOFLOW_EMBED_DEVICE", "cpu")
+
+
 def get_model():
     from sentence_transformers import SentenceTransformer
     model_path = config.MODEL_PATH
-    print(f"모델 로딩: {model_path}")
-    model = SentenceTransformer(model_path)
+    device = select_model_device()
+    print(f"모델 로딩: {model_path} (device={device})")
+    model = SentenceTransformer(model_path, device=device)
     model.max_seq_length = 384
     return model
 

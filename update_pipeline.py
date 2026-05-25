@@ -1,288 +1,244 @@
-"""
-과실비율 인정기준 자동 업데이트 파이프라인
-
-동작 순서:
-  1. 손보협 사이트에서 PDF URL 탐색 후 다운로드
-  2. SHA-256 해시 비교 → 변경 없으면 종료
-  3. pdfplumber로 텍스트 추출 → output.txt 저장
-  4. 청킹 → chunks.json 업데이트
-  5. parse_chunks + insert_qdrant → Qdrant 재삽입
-  6. update_log.json 기록
-"""
-
 import hashlib
 import json
-import logging
-import os
 import re
-import subprocess
+import shutil
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
 import requests
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-STANDARD_PAGE_URL = "https://accident.knia.or.kr/standard"
-PDF_FALLBACK_URL = "https://www.knia.or.kr/file-manager/105815"
-
-PDF_PATH = os.path.join(BASE_DIR, "fault_standard.pdf")
-PDF_HASH_PATH = os.path.join(BASE_DIR, "fault_standard.sha256")
-OUTPUT_TXT_PATH = os.path.join(BASE_DIR, "output.txt")
-CHUNKS_PATH = os.path.join(BASE_DIR, "chunks.json")
-UPDATE_LOG_PATH = os.path.join(BASE_DIR, "update_log.json")
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.join(BASE_DIR, "update_pipeline.log"), encoding="utf-8"),
-    ],
+BASE_DIR = Path(__file__).resolve().parent
+PDF_URL = "https://www.knia.or.kr/file-manager/105814"
+PDF_PATH = BASE_DIR / "docs" / "fault_rules_latest.pdf"
+HASH_PATH = BASE_DIR / "docs" / "fault_rules_latest.sha256"
+TEXT_PATH = BASE_DIR / "docs" / "fault_rules_latest.txt"
+CHUNKS_PATH = BASE_DIR / "chunks.json"
+STRUCTURED_PATH = BASE_DIR / "chunks_structured.json"
+UPDATE_LOG_PATH = BASE_DIR / "update_log.json"
+CRON_LINE = (
+    "0 0 1 1,4,7,10 * /usr/bin/python3 "
+    "/home/minsung0830/innoflow_rag/update_pipeline.py "
+    ">> /home/minsung0830/innoflow_rag/cron.log 2>&1"
 )
-log = logging.getLogger(__name__)
+
+RULE_ID_RE = re.compile(r"^(?:차|보|거)\d{1,2}-\d{1,2}$")
 
 
-# ─────────────────────────────────────────────
-# 1. PDF 다운로드
-# ─────────────────────────────────────────────
-
-def _find_pdf_url() -> str:
-    """손보협 기준정보 페이지에서 최신 PDF URL 탐색"""
-    try:
-        resp = requests.get(STANDARD_PAGE_URL, timeout=15)
-        resp.raise_for_status()
-        # 과실비율 인정기준 PDF 링크 패턴
-        match = re.search(
-            r'href=["\']([^"\']*file-manager/\d+)["\'][^>]*>[^<]*과실비율\s*인정기준',
-            resp.text,
-        )
-        if match:
-            url = match.group(1)
-            if url.startswith("//"):
-                url = "https:" + url
-            log.info(f"페이지에서 PDF URL 탐색 성공: {url}")
-            return url
-    except Exception as e:
-        log.warning(f"PDF URL 탐색 실패, fallback 사용: {e}")
-    return PDF_FALLBACK_URL
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 
-def download_pdf() -> bytes:
-    """PDF 다운로드 후 바이트 반환"""
-    url = _find_pdf_url()
-    log.info(f"PDF 다운로드 시작: {url}")
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; InnoflowBot/1.0)"}
-    resp = requests.get(url, headers=headers, timeout=60)
-    resp.raise_for_status()
-    content_type = resp.headers.get("Content-Type", "")
-    if "pdf" not in content_type and len(resp.content) < 1000:
-        raise ValueError(f"PDF 응답이 아닙니다. Content-Type: {content_type}")
-    log.info(f"PDF 다운로드 완료: {len(resp.content):,} bytes")
-    return resp.content
-
-
-# ─────────────────────────────────────────────
-# 2. 해시 비교
-# ─────────────────────────────────────────────
-
-def sha256(data: bytes) -> str:
+def sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def load_stored_hash() -> str:
-    if os.path.exists(PDF_HASH_PATH):
-        with open(PDF_HASH_PATH, "r") as f:
-            return f.read().strip()
-    return ""
+def read_text(path):
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8").strip()
 
 
-def save_hash(h: str) -> None:
-    with open(PDF_HASH_PATH, "w") as f:
-        f.write(h)
+def atomic_write_bytes(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_bytes(data)
+    tmp_path.replace(path)
 
 
-# ─────────────────────────────────────────────
-# 3. 텍스트 추출
-# ─────────────────────────────────────────────
+def atomic_write_json(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp_path.replace(path)
 
-def extract_text(pdf_bytes: bytes) -> str:
-    """pdfplumber로 PDF 전체 텍스트 추출"""
+
+def download_pdf(url=PDF_URL):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    response = requests.get(url, headers=headers, timeout=60)
+    response.raise_for_status()
+    content_type = response.headers.get("content-type", "")
+    content = response.content
+    if not content.startswith(b"%PDF"):
+        raise RuntimeError(f"Downloaded file is not a PDF: content-type={content_type!r}")
+    return content, content_type
+
+
+def extract_pages_with_pdfplumber(pdf_path):
     import pdfplumber
-    import io
 
-    log.info("PDF 텍스트 추출 중...")
-    all_text = []
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        for i, page in enumerate(pdf.pages, 1):
-            text = page.extract_text() or ""
-            all_text.append(text)
-            if i % 10 == 0:
-                log.info(f"  {i}/{len(pdf.pages)} 페이지 처리 중...")
-
-    result = "\n".join(all_text)
-    with open(OUTPUT_TXT_PATH, "w", encoding="utf-8") as f:
-        f.write(result)
-    log.info(f"텍스트 추출 완료: {len(result):,}자 → {OUTPUT_TXT_PATH}")
-    return result
+    pages = []
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        for page_number, page in enumerate(pdf.pages, start=1):
+            text = page.extract_text(x_tolerance=1, y_tolerance=3) or ""
+            pages.append((page_number, text))
+    return pages
 
 
-# ─────────────────────────────────────────────
-# 4. 청킹 (case ID 기준 분할)
-# ─────────────────────────────────────────────
+def normalize_page_text(text):
+    lines = []
+    for raw_line in text.splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
+        if line:
+            lines.append(line)
+    return lines
 
-# 차N-N, 보N-N, 거N-N 패턴
-_CHUNK_ID_PATTERN = re.compile(r"^(차\d+-\d+|보\d+-\d+|거\d+-\d+)\s*$", re.MULTILINE)
 
-
-def chunk_text(text: str) -> list[dict]:
-    """
-    텍스트를 case ID(차N-N, 보N-N, 거N-N) 기준으로 분할하여 chunks.json 형식으로 반환
-    """
-    matches = list(_CHUNK_ID_PATTERN.finditer(text))
-    if not matches:
-        log.warning("청크 ID 패턴을 찾지 못했습니다. PDF 구조를 확인하세요.")
-        return []
-
+def chunk_pages(pages):
     chunks = []
-    for i, match in enumerate(matches):
-        chunk_id = match.group(1).strip()
-        start = match.start()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        content = text[start:end].strip()
-        if content:
-            chunks.append({"id": chunk_id, "content": content})
+    current_id = None
+    current_lines = []
 
-    log.info(f"청킹 완료: {len(chunks)}개 chunk 생성")
+    def flush():
+        if current_id is None:
+            return
+        content_lines = [current_id] + current_lines
+        content = "\n".join(line for line in content_lines if line).strip()
+        chunks.append({"id": current_id, "content": content})
+
+    for page_number, text in pages:
+        page_marker = f"=== {page_number}페이지 ==="
+        for line in normalize_page_text(text):
+            if RULE_ID_RE.fullmatch(line):
+                flush()
+                current_id = line
+                current_lines = [page_marker]
+                continue
+            if current_id is not None:
+                current_lines.append(line)
+
+    flush()
     return chunks
 
 
-def update_chunks(text: str) -> int:
-    """chunks.json 업데이트, 생성된 chunk 수 반환"""
-    chunks = chunk_text(text)
-    if not chunks:
-        raise ValueError("청킹 결과가 비어 있습니다.")
-
-    with open(CHUNKS_PATH, "w", encoding="utf-8") as f:
-        json.dump(chunks, f, ensure_ascii=False, indent=2)
-    log.info(f"chunks.json 업데이트 완료: {CHUNKS_PATH}")
-    return len(chunks)
+def write_extracted_text(pages):
+    parts = []
+    for page_number, text in pages:
+        parts.append(f"=== {page_number}페이지 ===\n{text.strip()}")
+    TEXT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    TEXT_PATH.write_text("\n\n".join(parts), encoding="utf-8")
 
 
-# ─────────────────────────────────────────────
-# 5. 임베딩 및 Qdrant 재삽입
-# ─────────────────────────────────────────────
-
-def reinsert_qdrant() -> int:
-    """parse_chunks + insert_qdrant 로직으로 Qdrant 재삽입"""
-    log.info("Qdrant 재삽입 시작...")
-
-    sys.path.insert(0, BASE_DIR)
+def write_structured_chunks():
     from parse_chunks import parse_all_chunks
+
+    parsed = parse_all_chunks(str(CHUNKS_PATH))
+    atomic_write_json(STRUCTURED_PATH, parsed)
+    return parsed
+
+
+def reinsert_qdrant():
     from insert_qdrant import insert_all
 
-    total = insert_all()
-    log.info(f"Qdrant 재삽입 완료: {total}건")
-    return total
+    return insert_all()
 
 
-# ─────────────────────────────────────────────
-# 6. 로그 기록
-# ─────────────────────────────────────────────
+def write_update_log(entry):
+    existing = []
+    if UPDATE_LOG_PATH.exists():
+        try:
+            with UPDATE_LOG_PATH.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            if isinstance(data, list):
+                existing = data
+            elif isinstance(data, dict):
+                existing = [data]
+        except json.JSONDecodeError:
+            backup_path = UPDATE_LOG_PATH.with_suffix(".json.bak")
+            shutil.copy2(UPDATE_LOG_PATH, backup_path)
+    existing.append(entry)
+    atomic_write_json(UPDATE_LOG_PATH, existing[-30:])
 
-def write_log(changed: bool, chunks: int = 0, qdrant_count: int = 0, error: str = "") -> None:
-    entry = {
-        "timestamp": datetime.now().isoformat(),
-        "changed": changed,
-        "chunks": chunks,
-        "qdrant_count": qdrant_count,
-        "error": error,
+
+def run_pipeline():
+    log = {
+        "started_at": now_iso(),
+        "pdf_url": PDF_URL,
+        "status": "running",
+        "steps": {},
     }
 
-    history = []
-    if os.path.exists(UPDATE_LOG_PATH):
-        try:
-            with open(UPDATE_LOG_PATH, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        except Exception:
-            history = []
-
-    history.insert(0, entry)
-    history = history[:50]  # 최근 50건만 유지
-
-    with open(UPDATE_LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
-    log.info(f"로그 저장 완료: {UPDATE_LOG_PATH}")
-
-
-# ─────────────────────────────────────────────
-# 메인 파이프라인
-# ─────────────────────────────────────────────
-
-def run(force: bool = False) -> dict:
-    """
-    전체 업데이트 파이프라인 실행
-
-    Args:
-        force: True이면 해시 비교 없이 강제 업데이트
-
-    Returns:
-        실행 결과 dict
-    """
-    log.info("=" * 60)
-    log.info("과실비율 인정기준 업데이트 파이프라인 시작")
-    log.info("=" * 60)
-
     try:
-        # 1. PDF 다운로드
-        pdf_bytes = download_pdf()
-
-        # 2. 해시 비교
-        new_hash = sha256(pdf_bytes)
-        stored_hash = load_stored_hash()
-
-        if not force and new_hash == stored_hash:
-            log.info("변경 없음 — 업데이트를 건너뜁니다.")
-            write_log(changed=False)
-            return {"changed": False, "message": "변경 없음"}
-
-        log.info(f"변경 감지 (구: {stored_hash[:12]}... → 신: {new_hash[:12]}...)")
-
-        # PDF 저장
-        with open(PDF_PATH, "wb") as f:
-            f.write(pdf_bytes)
-
-        # 3. 텍스트 추출
-        text = extract_text(pdf_bytes)
-
-        # 4. 청킹
-        chunk_count = update_chunks(text)
-
-        # 5. Qdrant 재삽입
-        qdrant_count = reinsert_qdrant()
-
-        # 6. 해시 저장 및 로그
-        save_hash(new_hash)
-        write_log(changed=True, chunks=chunk_count, qdrant_count=qdrant_count)
-
-        log.info("=" * 60)
-        log.info(f"업데이트 완료 — chunk {chunk_count}건, Qdrant {qdrant_count}건")
-        log.info("=" * 60)
-
-        return {
-            "changed": True,
-            "chunks": chunk_count,
-            "qdrant_count": qdrant_count,
-            "message": "업데이트 완료",
+        pdf_content, content_type = download_pdf()
+        pdf_hash = sha256_bytes(pdf_content)
+        previous_hash = read_text(HASH_PATH)
+        hash_changed = previous_hash != pdf_hash
+        atomic_write_bytes(PDF_PATH, pdf_content)
+        HASH_PATH.write_text(pdf_hash + "\n", encoding="utf-8")
+        log["steps"]["download"] = {
+            "ok": True,
+            "content_type": content_type,
+            "bytes": len(pdf_content),
+            "path": str(PDF_PATH),
         }
+        log["steps"]["hash"] = {
+            "ok": True,
+            "previous_hash": previous_hash,
+            "current_hash": pdf_hash,
+            "changed": hash_changed,
+        }
+        print(f"PDF 다운로드 성공: {len(pdf_content)} bytes")
+        print(f"해시 비교 완료: changed={hash_changed}")
 
-    except Exception as e:
-        log.error(f"파이프라인 오류: {e}", exc_info=True)
-        write_log(changed=False, error=str(e))
+        pages = extract_pages_with_pdfplumber(PDF_PATH)
+        write_extracted_text(pages)
+        total_text_chars = sum(len(text) for _, text in pages)
+        log["steps"]["extract_text"] = {
+            "ok": True,
+            "pages": len(pages),
+            "text_chars": total_text_chars,
+            "path": str(TEXT_PATH),
+            "extractor": "pdfplumber",
+        }
+        print(f"텍스트 추출 완료: pages={len(pages)}, chars={total_text_chars}")
+
+        chunks = chunk_pages(pages)
+        if not chunks:
+            raise RuntimeError("Chunking produced 0 chunks")
+        atomic_write_json(CHUNKS_PATH, chunks)
+        log["steps"]["chunk"] = {
+            "ok": True,
+            "chunk_count": len(chunks),
+            "path": str(CHUNKS_PATH),
+            "sample_ids": [chunk["id"] for chunk in chunks[:10]],
+        }
+        print(f"청킹 완료: chunks={len(chunks)}")
+
+        parsed = write_structured_chunks()
+        rule_count = sum(1 for item in parsed if item.get("is_rule"))
+        log["steps"]["structure"] = {
+            "ok": True,
+            "structured_count": len(parsed),
+            "rule_count": rule_count,
+            "path": str(STRUCTURED_PATH),
+        }
+        print(f"구조화 완료: structured={len(parsed)}, rules={rule_count}")
+
+        inserted = reinsert_qdrant()
+        log["steps"]["qdrant"] = {"ok": True, "inserted": inserted}
+        print(f"Qdrant 재삽입 완료: inserted={inserted}")
+
+        log["status"] = "success"
+        return log
+    except Exception as exc:
+        log["status"] = "failed"
+        log["error"] = repr(exc)
         raise
+    finally:
+        log["finished_at"] = now_iso()
+        write_update_log(log)
+        print(f"update_log 저장: {UPDATE_LOG_PATH}")
+
+
+def main():
+    try:
+        run_pipeline()
+    except Exception as exc:
+        print(f"업데이트 파이프라인 실패: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    force = "--force" in sys.argv
-    result = run(force=force)
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    raise SystemExit(main())

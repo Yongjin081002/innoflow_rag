@@ -1,0 +1,158 @@
+[
+  {
+    "started_at": "2026-05-25T06:10:14.485892+00:00",
+    "pdf_url": "https://www.knia.or.kr/file-manager/105814",
+    "status": "failed",
+    "steps": {
+      "download": {
+        "ok": true,
+        "content_type": "application/pdf;charset=UTF-8",
+        "bytes": 16982418,
+        "path": "/home/minsung0830/innoflow_rag/docs/fault_rules_latest.pdf"
+      },
+      "hash": {
+        "ok": true,
+        "previous_hash": null,
+        "current_hash": "6502fca09a6f9cb26c6166f182429f9c947582dbdbbe1e844a3c7949fbfab06e",
+        "changed": true
+      },
+      "extract_text": {
+        "ok": true,
+        "pages": 600,
+        "text_chars": 523758,
+        "path": "/home/minsung0830/innoflow_rag/docs/fault_rules_latest.txt",
+        "extractor": "pdfplumber"
+      },
+      "chunk": {
+        "ok": true,
+        "chunk_count": 158,
+        "path": "/home/minsung0830/innoflow_rag/chunks.json",
+        "sample_ids": [
+          "보27-1",
+          "보27-2",
+          "보29-1",
+          "보29-2",
+          "차1-1",
+          "차1-2",
+          "차1-3",
+          "차1-4",
+          "차1-5",
+          "차2-1"
+        ]
+      },
+      "structure": {
+        "ok": true,
+        "structured_count": 158,
+        "rule_count": 157,
+        "path": "/home/minsung0830/innoflow_rag/chunks_structured.json"
+      }
+    },
+    "error": "FileNotFoundError('Path /home/minsung0830/innoflow_rag/boost_best_vlm_v3 not found')",
+    "finished_at": "2026-05-25T06:10:54.729180+00:00"
+  },
+  {
+    "started_at": "2026-05-25T06:20:00.709963+00:00",
+    "pdf_url": "https://www.knia.or.kr/file-manager/105814",
+    "status": "failed",
+    "steps": {
+      "download": {
+        "ok": true,
+        "content_type": "application/pdf;charset=UTF-8",
+        "bytes": 16982418,
+        "path": "/home/minsung0830/innoflow_rag/docs/fault_rules_latest.pdf"
+      },
+      "hash": {
+        "ok": true,
+        "previous_hash": "6502fca09a6f9cb26c6166f182429f9c947582dbdbbe1e844a3c7949fbfab06e",
+        "current_hash": "6502fca09a6f9cb26c6166f182429f9c947582dbdbbe1e844a3c7949fbfab06e",
+        "changed": false
+      },
+      "extract_text": {
+        "ok": true,
+        "pages": 600,
+        "text_chars": 523758,
+        "path": "/home/minsung0830/innoflow_rag/docs/fault_rules_latest.txt",
+        "extractor": "pdfplumber"
+      },
+      "chunk": {
+        "ok": true,
+        "chunk_count": 158,
+        "path": "/home/minsung0830/innoflow_rag/chunks.json",
+        "sample_ids": [
+          "보27-1",
+          "보27-2",
+          "보29-1",
+          "보29-2",
+          "차1-1",
+          "차1-2",
+          "차1-3",
+          "차1-4",
+          "차1-5",
+          "차2-1"
+        ]
+      },
+      "structure": {
+        "ok": true,
+        "structured_count": 158,
+        "rule_count": 157,
+        "path": "/home/minsung0830/innoflow_rag/chunks_structured.json"
+      }
+    },
+    "error": "OutOfMemoryError('CUDA out of memory. Tried to allocate 16.00 MiB. GPU 0 has a total capacity of 23.69 GiB of which 15.25 MiB is free. Process 1130227 has 21.66 GiB memory in use. Process 1152843 has 728.00 MiB memory in use. Process 1949024 has 1.27 GiB memory in use. Of the allocated memory 1.02 GiB is allocated by PyTorch, and 9.25 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)')",
+    "finished_at": "2026-05-25T06:20:43.706302+00:00"
+  },
+  {
+    "started_at": "2026-05-25T06:27:49.126596+00:00",
+    "pdf_url": "https://www.knia.or.kr/file-manager/105814",
+    "status": "success",
+    "steps": {
+      "download": {
+        "ok": true,
+        "content_type": "application/pdf;charset=UTF-8",
+        "bytes": 16982418,
+        "path": "/home/minsung0830/innoflow_rag/docs/fault_rules_latest.pdf"
+      },
+      "hash": {
+        "ok": true,
+        "previous_hash": "6502fca09a6f9cb26c6166f182429f9c947582dbdbbe1e844a3c7949fbfab06e",
+        "current_hash": "6502fca09a6f9cb26c6166f182429f9c947582dbdbbe1e844a3c7949fbfab06e",
+        "changed": false
+      },
+      "extract_text": {
+        "ok": true,
+        "pages": 600,
+        "text_chars": 523758,
+        "path": "/home/minsung0830/innoflow_rag/docs/fault_rules_latest.txt",
+        "extractor": "pdfplumber"
+      },
+      "chunk": {
+        "ok": true,
+        "chunk_count": 158,
+        "path": "/home/minsung0830/innoflow_rag/chunks.json",
+        "sample_ids": [
+          "보27-1",
+          "보27-2",
+          "보29-1",
+          "보29-2",
+          "차1-1",
+          "차1-2",
+          "차1-3",
+          "차1-4",
+          "차1-5",
+          "차2-1"
+        ]
+      },
+      "structure": {
+        "ok": true,
+        "structured_count": 158,
+        "rule_count": 157,
+        "path": "/home/minsung0830/innoflow_rag/chunks_structured.json"
+      },
+      "qdrant": {
+        "ok": true,
+        "inserted": 157
+      }
+    },
+    "finished_at": "2026-05-25T06:28:39.563123+00:00"
+  }
+]
