@@ -18,7 +18,7 @@ CHUNKS_PATH = BASE_DIR / "chunks.json"
 STRUCTURED_PATH = BASE_DIR / "chunks_structured.json"
 UPDATE_LOG_PATH = BASE_DIR / "update_log.json"
 CRON_LINE = (
-    "0 0 1 1,4,7,10 * /usr/bin/python3 "
+    "0 3 1 1,7 * /home/minsung0830/miniconda3/bin/python3 "
     "/home/minsung0830/innoflow_rag/update_pipeline.py "
     ">> /home/minsung0830/innoflow_rag/cron.log 2>&1"
 )
